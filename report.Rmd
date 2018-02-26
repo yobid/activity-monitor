@@ -1,0 +1,141 @@
+---
+title: "Activity Monitor"
+author: "Yoan Bidart"
+date: "2/26/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(jsonlite)
+library(caret)
+library(dplyr)
+```
+
+## Introduction
+
+This project has been made on Health Hackathon in Nice, France (november 2017). Our goal was to create a prototype of an activity monitor for elderly people in retirement home to quantify their activity and detect differences.
+Our material was a 3D camera with a first layer that gives us the 3 dimension spacial coordinates of different joints in the body. 
+
+## Data engineering and creation of the prediction model
+
+### Getting the data
+As we created a prototype our measurements were during 1 min, but for a real life use our timeframe would be 24h to measure sleeping and active time, all day long. We created samples with average activity, high-activity, low-activity, and no-activity.
+
+```{r eval=FALSE}
+library(jsonlite)
+library(caret)
+library(dplyr)
+```
+First we cleaned the Json input, put the measures in a dataframe and compute the standard deviation of the points to quantify our activity. 
+```{r}
+#function to clean the output and compute standard deviation for each sample
+clean <- function(x, ...) {
+        obs <- NULL
+        for (i in 1:length(input$Skeletons)) {
+                x <- unlist(input$Skeletons[[i]])
+                obs <- rbind(obs, x)
+        }
+        obs <- obs[,80:ncol(obs)]
+        apply(X=obs, MARGIN=2, FUN=sd)
+}
+#read the files and label them
+file <- c("01.json", "02.json", "03.json", "04.json", "05.json", "06.json",
+          "07.json", "08.json", "09.json", "10.json")
+
+#slow status
+path <- "data/slowCase/"
+nfiles <- 10
+temp <- data.frame()
+for (i in 1:nfiles) {
+        inpath <- paste(path, file[i], sep="")
+        input <- fromJSON(inpath)
+        inputC <- clean(input)
+        temp <- rbind.data.frame(temp, inputC)
+        names(temp) <- names(inputC)
+}
+slowTrain <- temp
+slowTrain$status <- rep("slow", 10)
+
+#stop status
+path <- "data/motionLessCase/"
+nfiles <- 6
+temp <- data.frame()
+for (i in 1:nfiles) {
+        inpath <- paste(path, file[i], sep="")
+        input <- fromJSON(inpath)
+        inputC <- clean(input)
+        temp <- rbind.data.frame(temp, inputC)
+        names(temp) <- names(inputC)
+}
+stopTrain <- temp
+stopTrain$status <- rep("stop", 6)
+
+#fast status
+path <- "data/fastCase/"
+nfiles <- 10
+temp <- data.frame()
+for (i in 1:nfiles) {
+        inpath <- paste(path, file[i], sep="")
+        input <- fromJSON(inpath)
+        inputC <- clean(input)
+        temp <- rbind.data.frame(temp, inputC)
+        names(temp) <- names(inputC)
+}
+fastTrain <- temp
+fastTrain$status <- rep("fast", 10)
+
+#average status
+path <- "data/normalCase/"
+nfiles <- 10
+temp <- data.frame()
+for (i in 1:nfiles) {
+        inpath <- paste(path, file[i], sep="")
+        input <- fromJSON(inpath)
+        inputC <- clean(input)
+        temp <- rbind.data.frame(temp, inputC)
+        names(temp) <- names(inputC)
+}
+normalTrain <- temp
+normalTrain$status <- rep("average", 10)
+
+#bind the dataframes together
+allTrain <- rbind(stopTrain, slowTrain, normalTrain, fastTrain)
+```
+
+### Feature engineering
+We got rid of the near zero variance features.
+```{r}
+zeroVar <- nearZeroVar(allTrain)
+allTrain <- select(allTrain, -zeroVar)
+```
+
+### Fitting model
+As we had few observations, we created a random forest model. For choosing the best model, I think it could be interesting to pick up real life data and then build a better model. 
+```{r eval=FALSE}
+fit1 <- train(status~., data=allTrain, method="rf")
+```
+
+## Real time prediction
+We integrated the following R script in the backend, for this project our backend dev used Node.js. 
+
+```{r, eval=FALSE}
+#clean input
+input2 <- unlist(input)
+input2 <- fromJSON(input2)
+obs <- NULL
+for (i in 1:length(input2$Skeletons)) {
+        x <- unlist(input2$Skeletons[[i]])
+        obs <- rbind(obs, x)
+}
+obs <- obs[,80:ncol(obs)]
+#compute standard deviation
+data <- apply(X=obs, MARGIN=2, FUN=sd)
+#remove zero variation features
+data <- select(data, -zeroVar)
+#predict
+predict(fit, data)
+```
+
+## Thinking forward
+This project can be very useful for elderly people. I think the best way to make it work is to train the model with the data from one people for a few days, and then alert the nurses and doctors if we detect a change in the behaviour. This could be linked with depression or being sick (less movement), and becoming hyperactive could be a sign of dementia or other mental disease. 
